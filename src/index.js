@@ -1,6 +1,6 @@
 const {createBullBoard} = require('@bull-board/api');
 const {BullAdapter} = require('@bull-board/api/bullAdapter');
-const {BullMQAdapter} = require('@bull-board/api//bullMQAdapter');
+const {BullMQAdapter} = require('@bull-board/api/bullMQAdapter');
 const {ExpressAdapter} = require('@bull-board/express');
 const Queue = require('bull');
 const bullmq = require('bullmq');
@@ -25,11 +25,31 @@ const redisConfig = {
 };
 
 const serverAdapter = new ExpressAdapter();
-const client = redis.createClient(redisConfig.redis);
+serverAdapter.setBasePath(config.HOME_PAGE);
+
 const {setQueues} = createBullBoard({queues: [], serverAdapter});
 const router = serverAdapter.getRouter();
 
-client.KEYS(`${config.BULL_PREFIX}:*`, (err, keys) => {
+// Redis v4 requires async/await and connect()
+const clientConfig = {
+	socket: {
+		port: config.REDIS_PORT,
+		host: config.REDIS_HOST,
+		tls: config.REDIS_USE_TLS === 'true',
+	},
+	database: config.REDIS_DB,
+};
+
+if (config.REDIS_PASSWORD) {
+	clientConfig.password = config.REDIS_PASSWORD;
+}
+
+const client = redis.createClient(clientConfig);
+
+(async () => {
+	await client.connect();
+
+	const keys = await client.keys(`${config.BULL_PREFIX}:*`);
 	const uniqKeys = new Set(keys.map(key => key.replace(/^.+?:(.+?):.+?$/, '$1')));
 	const queueList = Array.from(uniqKeys).sort().map(
 		(item) => {
@@ -46,7 +66,9 @@ client.KEYS(`${config.BULL_PREFIX}:*`, (err, keys) => {
 	);
 
 	setQueues(queueList);
-	console.log('done!')
+	console.log('done!');
+})().catch(err => {
+	console.error('Error setting up queues:', err);
 });
 
 const app = express();
